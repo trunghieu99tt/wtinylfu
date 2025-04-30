@@ -1,10 +1,11 @@
+import { runInThisContext } from "vm";
 import { Node } from "./node";
 
 export class LRU<K extends string, V> {
-    protected head: Node<K, V>;
-    protected tail: Node<K, V>;
-    protected cache: Map<K, Node<K, V>>;
-    protected capacity: number;
+    private head: Node<K, V>;
+    private tail: Node<K, V>;
+    private cache: Map<K, Node<K, V>>;
+    private capacity: number;
 
     constructor(capacity: number) {
         this.capacity = capacity;
@@ -15,10 +16,8 @@ export class LRU<K extends string, V> {
         this.tail.prev = this.head;
     }
 
-    protected moveToHead(node: Node<K, V>) {
-        // Remove node from its current position
-        node.prev.next = node.next;
-        node.next.prev = node.prev;
+    private moveToHead(node: Node<K, V>) {
+        this.delete(node);
 
         // Insert node after head
         node.next = this.head.next;
@@ -27,7 +26,7 @@ export class LRU<K extends string, V> {
         this.head.next = node;
     }
 
-    protected removeTail(): Node<K, V> {
+    private removeTail(): Node<K, V> {
         const node = this.tail.prev;
         this.tail.prev = node.prev;
         node.prev.next = this.tail;
@@ -38,23 +37,32 @@ export class LRU<K extends string, V> {
         return this.cache.has(key);
     }
 
+    getNode(key: K): Node<K, V> | undefined {
+        return this.cache.get(key);
+    }
+
     get(key: K): V | undefined {
-        const node = this.cache.get(key);
+        const node = this.getNode(key);
         if (!node) return undefined;
 
         this.moveToHead(node);
         return node.value;
     }
 
+    delete(node: Node<K, V>): void {
+        node.prev.next = node.next;
+        node.next.prev = node.prev;
+    }
+
     put(key: K, value: V): Node<K, V> | null {
-        let removed: Node<K, V> | null = null;
         if (this.cache.has(key)) {
             const node = this.cache.get(key)!;
             node.value = value;
             this.moveToHead(node);
-            return removed;
+            return null;
         }
 
+        let removed: Node<K, V> | null = null;
         if (this.cache.size >= this.capacity) {
             removed = this.removeTail();
             this.cache.delete(removed.key);
@@ -67,7 +75,10 @@ export class LRU<K extends string, V> {
     }
 
     peekLRU(): Node<K, V> | null {
-        return this.tail.prev;
+        if (this.size() >= this.getCapacity()) {
+            return this.tail.prev;
+        }
+        return null;
     }
 
     size(): number {
@@ -83,5 +94,9 @@ export class LRU<K extends string, V> {
 
     getCapacity(): number {
         return this.capacity;
+    }
+
+    getCache(): Map<K, Node<K, V>> {
+        return this.cache;
     }
 }

@@ -1,4 +1,4 @@
-import { WTinyLFU } from "./index";
+import { WTinyLFU } from "./w-tiny-lfu";
 
 describe("WTinyLFU", () => {
     let cache: WTinyLFU<string, number>;

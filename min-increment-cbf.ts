@@ -2,81 +2,72 @@ import { HashFunctions } from "./hash";
 import { nextPowerOf2 } from "./util";
 import { DoorKeeper } from "./door-keeper";
 
-/**
- * MinIncrementCBF implements a Count-Min Sketch with a door keeper filter
- * for efficient frequency estimation of items in a stream.
- */
+const HASH_FUNCS = [
+    HashFunctions.djb2,
+    HashFunctions.sdbm,
+    HashFunctions.jenkins,
+    HashFunctions.simple,
+] as const;
+
 class MinIncrementCBF {
     private readonly cap: number;
     private readonly size: number;
     private readonly mask: number;
-    private counters: number[];
     private readonly doorKeeper: DoorKeeper;
-    private readonly hashFunctions = [
-        HashFunctions.djb2,
-        HashFunctions.sdbm,
-        HashFunctions.jenkins,
-        HashFunctions.simple,
-    ];
+    private counters: Uint8Array;
+    private ticks = 0;
 
-    constructor(size: number, cap: number) {
-        this.size = nextPowerOf2(size);
+    constructor(
+        readonly cacheCapacity: number,
+        readonly sampleSize: number = cacheCapacity * 10,
+        sketchSlots = 4096
+    ) {
+        this.cap = Math.ceil(this.sampleSize / this.cacheCapacity);
+        this.size = nextPowerOf2(sketchSlots);
         this.mask = this.size - 1;
-        this.cap = cap;
-        this.counters = new Array(this.size).fill(0);
-        this.doorKeeper = new DoorKeeper(this.size);
+
+        this.counters = new Uint8Array(this.size);
+        this.doorKeeper = new DoorKeeper(this.size >>> 2);
     }
 
-    private getHashSlots(key: string): number[] {
-        return this.hashFunctions.map((hash) => hash(key) & this.mask);
+    private hashSlots(key: string): number[] {
+        return HASH_FUNCS.map((h) => (h(key) >>> 0) & this.mask);
+    }
+
+    private minAcross(slots: number[]): number {
+        return Math.min(...slots.map((s) => this.counters[s]));
+    }
+
+    private reset(): void {
+        this.counters = this.counters.map((c) => c >> 1);
+        this.doorKeeper.reset();
+        this.ticks >>= 1;
     }
 
     estimate(key: string): number {
-        // Early return if key hasn't been seen before
-        if (!this.doorKeeper.contains(key)) {
-            return 0;
-        }
-
-        // Find minimum counter value across all hash slots
-        const hashSlots = this.getHashSlots(key);
-        return Math.min(...hashSlots.map((slot) => this.counters[slot]));
+        if (!this.doorKeeper.contains(key)) return 0;
+        const slots = this.hashSlots(key);
+        return this.minAcross(slots) + 1;
     }
 
     increment(key: string): boolean {
-        // Track if this is a new item
-        const isNewItem = !this.doorKeeper.contains(key);
-
-        // Always add to door keeper
+        this.ticks += 1;
+        const firstTime = !this.doorKeeper.contains(key);
         this.doorKeeper.add(key);
+        if (firstTime) return false;
 
-        // Skip counter updates for first-time items
-        if (isNewItem) {
-            return false;
-        }
+        const slots = this.hashSlots(key);
+        const minFreq = this.minAcross(slots);
 
-        // Get current count and hash slots
-        const minCount = this.estimate(key);
-        const hashSlots = this.getHashSlots(key);
+        for (const s of slots)
+            if (this.counters[s] === minFreq && this.counters[s] < this.cap)
+                this.counters[s]++;
 
-        // Increment only the counters that match the minimum value
-        hashSlots.forEach((slot) => {
-            if (this.counters[slot] === minCount) {
-                this.counters[slot]++;
-            }
-        });
-
-        // Check if we need to reset
-        if (minCount + 1 >= this.cap) {
+        if (this.ticks >= this.sampleSize) {
             this.reset();
             return true;
         }
-
         return false;
-    }
-
-    reset(): void {
-        // Halve all counter values
-        this.counters = this.counters.map((count) => Math.floor(count / 2));
     }
 }
 

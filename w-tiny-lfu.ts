@@ -7,30 +7,27 @@ export class WTinyLFU<K extends string, V> {
     private windowCache: LRU<K, V>;
     private mainCache: SegmentedLRU<K, V>;
     private frequencySketch: MinIncrementCBF;
+    private readonly cacheCapacity: number;
 
-    private capacity: number;
-    private sketchSize: number = 10; // Default multiplier for sketch size
-    private maxCounterValue: number = 8; // Default max counter value
-
-    constructor(capacity: number, windowRatio: number = 0.1) {
-        this.capacity = capacity;
-        this.initCaches(capacity, windowRatio);
+    constructor(cacheCapacity: number, windowRatio: number = 0.1) {
+        this.cacheCapacity = cacheCapacity;
+        this.initCaches(cacheCapacity, windowRatio);
     }
 
     /**
      * Initialize or reinitialize the caches
      */
-    private initCaches(capacity: number, windowRatio: number): void {
+    private initCaches(cacheCapacity: number, windowRatio: number): void {
         // window -> windowRatio (default 10%)
         // main -> remaining (default 90%)
-        const windowCapacity = Math.floor(capacity * windowRatio);
-        const mainCapacity = capacity - windowCapacity;
+        const windowCapacity = Math.max(
+            1,
+            Math.floor(cacheCapacity * windowRatio)
+        );
+        const mainCapacity = cacheCapacity - windowCapacity;
         this.windowCache = new LRU<K, V>(windowCapacity);
         this.mainCache = new SegmentedLRU<K, V>(mainCapacity);
-        this.frequencySketch = new MinIncrementCBF(
-            capacity * this.sketchSize,
-            this.maxCounterValue
-        );
+        this.frequencySketch = new MinIncrementCBF(cacheCapacity);
     }
 
     /**
@@ -44,9 +41,9 @@ export class WTinyLFU<K extends string, V> {
      * Handle admission from window cache to main cache
      */
     private handleAdmission(candidate: Node<K, V>): void {
-        const victim = this.mainCache.peekProbationLRU();
+        const victim = this.mainCache.peekProbationaryLRU();
+        // if there's no victim (probationary segment is not full), admit directly
         if (!victim) {
-            // If main cache's probation segment is not full, admit directly
             this.mainCache.put(candidate.key, candidate.value);
             return;
         }
@@ -83,10 +80,9 @@ export class WTinyLFU<K extends string, V> {
 
     put(key: K, value: V): void {
         this.recordAccess(key);
-        const removedFromWindow = this.windowCache.put(key, value);
-
-        if (removedFromWindow) {
-            this.handleAdmission(removedFromWindow);
+        const evictedFromWindow = this.windowCache.put(key, value);
+        if (evictedFromWindow) {
+            this.handleAdmission(evictedFromWindow);
         }
     }
 
@@ -96,8 +92,8 @@ export class WTinyLFU<K extends string, V> {
 
     clear(): void {
         this.initCaches(
-            this.capacity,
-            this.windowCache.getCapacity() / this.capacity
+            this.cacheCapacity,
+            this.windowCache.getCapacity() / this.cacheCapacity
         );
     }
 }

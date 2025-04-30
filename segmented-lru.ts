@@ -4,16 +4,12 @@ import { Node } from "./node";
 export class SegmentedLRU<K extends string, V> {
     private probationary: LRU<K, V>;
     private protected: LRU<K, V>;
-    private probationaryCapacity: number;
-    private protectedCapacity: number;
     private totalCapacity: number;
 
     constructor(capacity: number) {
         this.totalCapacity = capacity;
-        const probationaryCapacity = Math.floor(capacity * 0.2);
+        const probationaryCapacity = Math.max(1, Math.floor(capacity * 0.2));
         const protectedCapacity = capacity - probationaryCapacity;
-        this.probationaryCapacity = probationaryCapacity;
-        this.protectedCapacity = protectedCapacity;
         this.probationary = new LRU<K, V>(probationaryCapacity);
         this.protected = new LRU<K, V>(protectedCapacity);
     }
@@ -29,21 +25,14 @@ export class SegmentedLRU<K extends string, V> {
      * @returns The evicted item from protected segment if any
      */
     private moveToProtected(key: K, value: V): Node<K, V> | null {
-        let removed: Node<K, V> | null = null;
-
-        // Check if protected segment is full
-        if (this.protected.size() >= this.protectedCapacity) {
-            // Remove least recently used item from protected
-            removed = this.protected.removeLRU();
-            if (removed && removed.key !== key) {
-                // Move the removed item to probationary
-                this.probationary.put(removed.key, removed.value);
-            }
+        const removedFromProtected = this.protected.put(key, value);
+        if (removedFromProtected) {
+            return this.probationary.put(
+                removedFromProtected.key,
+                removedFromProtected.value
+            );
         }
-
-        // Add to protected segment
-        this.protected.put(key, value);
-        return removed;
+        return removedFromProtected;
     }
 
     get(key: K): V | undefined {
@@ -58,15 +47,18 @@ export class SegmentedLRU<K extends string, V> {
         }
 
         const probationaryValue = this.probationary.get(key)!;
-
         // Move to protected segment
         this.moveToProtected(key, probationaryValue);
         return probationaryValue;
     }
 
+    /**
+     * Puts a key-value pair into the cache
+     * @param key The key to put
+     * @param value The value to put
+     * @returns The evicted item from protected or probationary segment if any
+     */
     put(key: K, value: V): Node<K, V> | null {
-        let removed: Node<K, V> | null = null;
-
         // If key exists in protected segment, update it
         if (this.protected.has(key)) {
             this.protected.put(key, value);
@@ -75,22 +67,14 @@ export class SegmentedLRU<K extends string, V> {
 
         // If key exists in probationary segment, move to protected
         if (this.probationary.has(key)) {
-            this.moveToProtected(key, value);
-            return null;
+            this.probationary.delete(this.probationary.getNode(key)!);
+            return this.moveToProtected(key, value);
         }
 
-        // New key, add to probationary segment
-        // Check if probationary segment is full
-        if (this.probationary.size() >= this.probationaryCapacity) {
-            // Remove least recently used item from probationary
-            removed = this.probationary.removeLRU();
-        }
-
-        this.probationary.put(key, value);
-        return removed;
+        return this.probationary.put(key, value);
     }
 
-    peekProbationLRU(): Node<K, V> | null {
+    peekProbationaryLRU(): Node<K, V> | null {
         return this.probationary.peekLRU();
     }
 

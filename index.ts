@@ -1,11 +1,10 @@
+import { SegmentedLRU } from "./segmented-lru";
 import { WTinyLFU } from "./w-tiny-lfu";
 
-const cache = new WTinyLFU(100);
+const cache = new SegmentedLRU<string, number>(5);
 
-cache.put("key1", "value1");
-cache.put("key2", "value2");
-cache.put("key3", "value3");
-cache.put("key4", "value4");
-cache.put("key5", "value5");
+cache.put("key1", 1);
+cache.put("key2", 2);
 
 console.log(cache.get("key1"));
+console.log(cache.get("key2"));
